@@ -1,0 +1,15 @@
+# Postgres configuration
+development:
+  adapter: postgresql
+  encoding: unicode
+  database: phuber_development
+  pool: 5
+  username: eorcutt
+
+test:
+  adapter: postgresql
+  encoding: unicode
+  database: phuber_test
+  pool: 5
+  username: eorcutt
+    
