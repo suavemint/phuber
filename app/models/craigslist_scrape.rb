@@ -72,7 +72,7 @@ class CraigslistScrape < ActiveRecord::Base
 
   def get_postings_urls
     urls = scrape.xpath("//a[@class='#{craigslist_url_class}']")
-    @urls ||= urls.collect do |val|
+    @urls ||= urls.reject( &:nil? ).collect do |val|
       craigslist_url + val.attribute("href").value
     end
   end
@@ -94,7 +94,10 @@ class CraigslistScrape < ActiveRecord::Base
     get_postings_urls.each do |url|
       # TODO move the randomized wait time to outside this class?
       # sleep wait_time
-      posting = CraigslistPosting.new( :url => url, :base_url => craigslist_url )
+      posting = CraigslistPosting.new( :url => url,
+                                       :base_url => craigslist_url,
+                                       :craigslist_scrape_id => self.id )
+      self.postings_urls       << url
       self.craigslist_postings << posting
       posting.save!
       posting.get_email_information!

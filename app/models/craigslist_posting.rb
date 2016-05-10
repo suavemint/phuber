@@ -30,51 +30,75 @@ class CraigslistPosting < ActiveRecord::Base
     a
   end
 
+  def get_response( url, force=false )
+    unless force
+      @response ||= open( url, "User-Agent" => user_agent )
+    else
+      @response = open( url, "User-Agent" => user_agent )
+    end
+  end
+
   # TODO encapsulate proxy return failure externally.
   def scrape
-    scrape_proxy = proxy
-    response     = open( url, "User-Agent" => user_agent, :proxy => scrape_proxy.location_string )
+    # scrape_proxy = proxy
+    # puts "Trying to get HTML from url #{url}..."
 
+    # response     = open( url, "User-Agent" => user_agent )
+    response = get_response( url )
+    # response     = open( url, "User-Agent" => user_agent, :proxy => scrape_proxy.location_string )
+
+    # @scrape ||= Nokogiri::HTML( response )
+    return @scrape if @scrape
+    sleep (1..30).to_a.sample
+    puts "Sleeping in #scrape..."
     @scrape ||= Nokogiri::HTML( response )
-    # rescue OpenURI::HTTPError
-    # how to catch certain error codes?
-
-    # Check for 'banned response'. Retry if it exists.
-    # puts "Testing response code... #{response.status[0]}"
-    rescue
-      puts "HTTP error caught; trying request again..."
-      scrape_proxy.increment :bad_count
-      # case response.status[0]
-      # puts "Response = #{response}"
-      # when 403
-      #   scrape_proxy.increment( :code_403_count )
-      # when 500
-      #   scrape_proxy.increment( :code_500_count )
-      # else
-      # end
-
-      retry
   end
+
+  # rescue => e
+  #     puts "HTTP error caught; trying request again..."
+  #     puts "Error content: #{e.message}"
+  #     puts "Response content: #{response}"
+  #     scrape_proxy.increment :bad_count
+  #     retry
+  # end
 
   def reply_url
-    scrape.xpath("//a[@id='replylink']").attribute("href").text
+    begin
+      scrape.xpath("//a[@id='replylink']").try( :attribute, "href").try( :text )
+    rescue NoMethodError
+      nil
+    end
   end
 
-  def reply_scrape
+  def reply_url_scrape
+    puts "Getting reply info from reply page #{base_url+reply_url}..." if reply_url
     # scrape.xpath("//a[@class='mailapp']").attribute("href").value.split("?")
-    # @reply_scrape ||= Nokogiri::HTML( open( base_url + reply_url, "User-Agent" => user_agent, :proxy => proxy ) )
-    @reply_scrape ||= Nokogiri::HTML( open( base_url + reply_url, "User-Agent" => user_agent ) )
+    # @reply_url_scrape ||= Nokogiri::HTML( open( base_url + reply_url, "User-Agent" => user_agent, :proxy => proxy.location_string ) )
+    return @reply_url_scrape if @reply_url_scrape
+    puts "Sleeping in #reply_url_scrape..."
+    sleep (1..30).to_a.sample
+    # @reply_url_scrape ||= Nokogiri::HTML( open( base_url + reply_url, "User-Agent" => user_agent ) )
+    @reply_url_scrape = Nokogiri::HTML( open( base_url + reply_url, "User-Agent" => user_agent ) )
   end
 
-  def returned_recaptcha?
-    reply_content.empty?
+  def posting_returned_bad?
+    reply_url.nil?
+  end
+
+  def reply_info_url_returned_bad?
+    reply_content.nil?
   end
 
   def reply_content
-    @email_contents ||= reply_scrape.xpath("//a[@class='mailapp']").attribute("href").text
-    # Check if we're handed a reCAPTCHA.
-    # puts "TESTING SCRAPECONTENTS BEFORE CAPTCHA DETERMINATION: #{@email_contents}"
-    # return @email_contents
+    puts "scrape contents before reply button xpath: #{reply_url_scrape}"
+    test = reply_url_scrape.xpath("//a[@class='mailapp']")
+    puts "scrape contents after reply button xpath #{test}"
+    if !test.empty?
+      puts "Found legitimate reply info? #{test}"
+      @reply_content ||= test.try(:attribute, "href").try( :text )
+    else
+      nil
+    end
   end
     # unless email_contents.empty?
     # unless returned_recaptcha?
@@ -106,41 +130,39 @@ class CraigslistPosting < ActiveRecord::Base
 
   def get_email_address
     puts "#get_email_address"
-    puts "AM I RECAPTCHAD? #{self.recaptcha?}"
-    puts "REPLY_CONTENT: #{reply_content}"
-    reply_content.split("?").first.try(:split, ":").second
+    # puts "AM I RECAPTCHAD? #{self.returned_recaptcha?}"
+    # puts "REPLY_CONTENT: #{reply_content}"
+    a = reply_content.split("?").first.try(:split, ":").second
+    puts "Email address retrived: #{a}"
+    return a
   end
 
   def get_email_subject_line
     puts "#get_email_subject_line"
-    puts "AM I RECAPTCHAD? #{self.recaptcha?}"
-    puts "REPLY_CONTENT: #{reply_content}"
+    # puts "AM I RECAPTCHAD? #{self.returned_recaptcha?}"
+    # puts "REPLY_CONTENT: #{reply_content}"
     # TODO use URI.unescape on this string, to replace the %20, %40 with the appropriate chars.
-    reply_content.split("?").second.try(:split, "=").second.gsub("%20", " ").gsub("&body", "")
+    a = reply_content.split("?").second.try(:split, "=").second.gsub("%20", " ").gsub("&body", "")
+    puts "Email subject line retrived: #{a}"
+    return a
   end
 
   # TODO see if this method is necessary
-  def check_recaptcha_status!
-    reply_type unless reply_type.nil?
-
-    # unless scrape_contents.empty?
-    unless reply_content.empty?
-      # reply_type = "normal"
-      self.update_attributes( :recaptcha => false, :scrape_contents => reply_content )
-      puts "Recaptcha data not found in reply."
-    end
-
-    # if scrape_contents.xpath("//div[@class='captcha']").empty?
-    if reply_content.xpath("//div[@class='captcha']").empty?
-      puts "!Recaptcha data found in reply!"
-      # reply_type = "recaptcha"
-      self.update_attributes( :recaptcha => true )
-      # self.save!
-    end
-  end
+  # def check_recaptcha_status!
+  #   reply_type unless reply_type.nil?
+  #
+  #   # unless scrape_contents.empty?
+  #   unless reply_content.empty?
+  #     # reply_type = "normal"
+  #     self.update_attributes( :recaptcha => false, :scrape_contents => reply_content )
+  #     puts "Recaptcha data not found in reply."
+  #   else
+  #     self.update_attribute( :recaptcha => true )
+  #   end
+  # end
 
   def get_email_information!
-    unless returned_recaptcha?
+    unless (posting_returned_bad? || reply_info_url_returned_bad?)
       email_address   = get_email_address
       subject_line    = get_email_subject_line
       # scrape_contents = scrape.text
@@ -149,11 +171,8 @@ class CraigslistPosting < ActiveRecord::Base
       self.update_attributes( :recaptcha => false, :scrape_contents => reply_content,
       :email_address => email_address, :subject_line => subject_line )
     else
-      if reply_content.xpath("//div[@class='captcha']").empty?
-        puts "!Recaptcha data found in reply!"
-        # reply_type = "recaptcha"
-        self.update_attributes( :recaptcha => true )
-      end
+      # puts "Should be recaptcha -- reply = #{reply_content}"
+      self.update_attributes( :recaptcha => true )
     end
   end
 end
